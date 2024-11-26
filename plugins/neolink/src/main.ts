@@ -1,5 +1,5 @@
 import { sleep } from '@scrypted/common/src/sleep';
-import sdk, { Brightness, Camera, Device, DeviceCreatorSettings, DeviceInformation, DeviceProvider, Intercom, MediaObject, ObjectDetectionTypes, ObjectDetector, ObjectsDetected, OnOff, PanTiltZoom, PanTiltZoomCommand, Reboot, RequestPictureOptions, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, Setting, Settings } from "@scrypted/sdk";
+import sdk, { Brightness, Camera, Device, DeviceCreatorSettings, DeviceInformation, DeviceProvider, Intercom, MediaObject, ObjectDetectionTypes, ObjectDetector, ObjectsDetected, OnOff, PanTiltZoom, PanTiltZoomCommand, Reboot, RequestPictureOptions, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, Setting, Settings, SettingValue } from "@scrypted/sdk";
 import { StorageSettings } from '@scrypted/sdk/storage-settings';
 import { EventEmitter } from "stream";
 import { createRtspMediaStreamOptions, Destroyable, RtspProvider, RtspSmartCamera, UrlMediaStreamOptions } from "../../rtsp/src/rtsp";
@@ -75,7 +75,38 @@ import NeolinkCamera from './camera';
 //     }
 // }
 
-class NeolinkProvider extends RtspProvider {
+class NeolinkProvider extends RtspProvider implements Settings {
+    mqttClient: MqttClient;
+    storageSettings = new StorageSettings(this, {
+        neolinkServerIp: {
+            title: 'Neolink server IP',
+            type: 'string',
+        },
+        neolinkServerPort: {
+            title: 'Neolink server port',
+            type: 'string',
+            defaultValue: '8554',
+            placeholder: '8554',
+        },
+        rtspUsername: {
+            key: 'username',
+            title: 'RTSP Username',
+        },
+        rtspPassword: {
+            key: 'password',
+            title: 'RTSP Password',
+            type: 'password',
+        },
+    });
+
+    async getSettings(): Promise<Setting[]> {
+        return await this.storageSettings.getSettings();
+    }
+
+    async putSetting(key: string, value: SettingValue) {
+        await this.storageSettings.putSetting(key, value);
+    }
+
     getScryptedDeviceCreator(): string {
         return 'Neolink Camera';
     }
@@ -114,25 +145,6 @@ class NeolinkProvider extends RtspProvider {
 
     async getCreateDeviceSettings(): Promise<Setting[]> {
         return [
-            {
-                key: 'username',
-                title: 'Username',
-            },
-            {
-                key: 'password',
-                title: 'Password',
-                type: 'password',
-            },
-            {
-                key: 'ip',
-                title: 'IP Address',
-                placeholder: '192.168.2.222',
-            },
-            {
-                key: 'rtspPort',
-                title: 'RTSP Port Override',
-                placeholder: '8554',
-            },
             {
                 key: 'cameraName',
                 title: 'Camera neolink name',

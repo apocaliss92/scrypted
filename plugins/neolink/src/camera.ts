@@ -1,5 +1,5 @@
 import { sleep } from "@scrypted/common/src/sleep";
-import sdk, { Camera, DeviceProvider, PanTiltZoom, MediaObject, PanTiltZoomCommand, ScryptedDeviceType, ScryptedInterface, RequestPictureOptions, Setting, Device, Settings } from "@scrypted/sdk";
+import sdk, { Camera, PanTiltZoom, MediaObject, PanTiltZoomCommand, ScryptedDeviceType, ScryptedInterface, RequestPictureOptions, Setting, Settings } from "@scrypted/sdk";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { UrlMediaStreamOptions } from "../../ffmpeg-camera/src/common";
 import { Destroyable, RtspSmartCamera, createRtspMediaStreamOptions } from "../../rtsp/src/rtsp";
@@ -35,13 +35,11 @@ class NeolinkCamera extends RtspSmartCamera implements Camera, PanTiltZoom {
             type: 'string',
         },
         motionTimeout: {
-            subgroup: 'Advanced',
             title: 'Motion Timeout',
             defaultValue: 20,
             type: 'number',
         },
         ptz: {
-            subgroup: 'Advanced',
             title: 'PTZ Capabilities',
             choices: [
                 PtzAction.Pan,
@@ -55,7 +53,6 @@ class NeolinkCamera extends RtspSmartCamera implements Camera, PanTiltZoom {
             },
         },
         abilities: {
-            subgroup: 'Advanced',
             title: 'Abilities',
             choices: [
                 Ability.Battery,
@@ -68,7 +65,6 @@ class NeolinkCamera extends RtspSmartCamera implements Camera, PanTiltZoom {
             },
         },
         // presets: {
-        //     subgroup: 'Advanced',
         //     title: 'Presets',
         //     description: 'PTZ Presets in the format "id=name". Where id is the PTZ Preset identifier and name is a friendly name.',
         //     multiple: true,
@@ -316,21 +312,6 @@ class NeolinkCamera extends RtspSmartCamera implements Camera, PanTiltZoom {
         return false;
     }
 
-    // async getUrlSettings(): Promise<Setting[]> {
-    //     return [
-    //         {
-    //             key: 'rtspChannel',
-    //             title: 'Channel Number Override',
-    //             subgroup: 'Advanced',
-    //             description: "The channel number to use for snapshots and video. E.g., 0, 1, 2, etc.",
-    //             placeholder: '0',
-    //             type: 'number',
-    //             value: this.getRtspChannel(),
-    //         },
-    //         ...await super.getUrlSettings(),
-    //     ]
-    // }
-
     createRtspMediaStreamOptions(url: string, index: number) {
         const ret = createRtspMediaStreamOptions(url, index);
         ret.tool = 'scrypted';
@@ -339,8 +320,8 @@ class NeolinkCamera extends RtspSmartCamera implements Camera, PanTiltZoom {
 
     addRtspCredentials(rtspUrl: string) {
         const url = new URL(rtspUrl);
-        url.username = this.storage.getItem('username');
-        url.password = this.storage.getItem('password') || '';
+        url.username = this.provider.storageSettings.getItem('rtspUsername');
+        url.password = this.provider.storageSettings.getItem('rtspPassword');
         return url.toString();
     }
 
@@ -351,7 +332,7 @@ class NeolinkCamera extends RtspSmartCamera implements Camera, PanTiltZoom {
     async getConstructedVideoStreamOptions(): Promise<UrlMediaStreamOptions[]> {
         const { cameraName } = this.storageSettings.values;
 
-        const rtspAddress = this.getRtspAddress();
+        const rtspAddress = `${this.provider.storageSettings.getItem('neolinkServerIp')}:${this.provider.storageSettings.getItem('neolinkServerPort')}`;
 
         const streams: UrlMediaStreamOptions[] = [
             {
@@ -393,11 +374,8 @@ class NeolinkCamera extends RtspSmartCamera implements Camera, PanTiltZoom {
         return false;
     }
 
-    async getOtherSettings(): Promise<Setting[]> {
-        return [
-            ...await this.storageSettings.getSettings(),
-            ...await super.getRtspPortOverrideSettings(),
-        ]
+    async getSettings(): Promise<Setting[]> {
+        return await this.storageSettings.getSettings();
     }
 
     // async reportDevices() {
