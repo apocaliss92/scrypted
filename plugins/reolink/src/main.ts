@@ -88,6 +88,7 @@ class ReolinkCamera extends RtspSmartCamera implements Camera, DeviceProvider, R
     siren: ReolinkCameraSiren;
     floodlight: ReolinkCameraFloodlight;
     batteryTimeout: NodeJS.Timeout;
+    refreshTokenTimeout: NodeJS.Timeout;
 
     storageSettings = new StorageSettings(this, {
         doorbell: {
@@ -106,6 +107,12 @@ class ReolinkCamera extends RtspSmartCamera implements Camera, DeviceProvider, R
             title: 'Motion Timeout',
             defaultValue: 20,
             type: 'number',
+        },
+        apiToken: {
+            subgroup: 'Advanced',
+            title: 'API Token',
+            type: 'string',
+            readonly: true,
         },
         hasObjectDetector: {
             json: true,
@@ -220,6 +227,14 @@ class ReolinkCamera extends RtspSmartCamera implements Camera, DeviceProvider, R
             .catch(e => {
                 this.console.log('device refresh failed', e);
             });
+
+        this.refreshTokenTimeout = setInterval(async () => {
+            const response = await this.getClientWithToken().login();
+            const token = response?.parameters?.token;
+            if (token) {
+                this.storageSettings.putSetting('apiToken', token);
+            }
+        }, 10000);
     }
 
     updatePtzCaps() {

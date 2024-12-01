@@ -83,6 +83,8 @@ export class ReolinkCameraClient {
         const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
         this.parameters = parameters
         this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
+
+        return { parameters: this.parameters, tokenLease: this.tokenLease };
     }
 
     async requestWithLogin(options: HttpFetchOptions<Readable>, body?: Readable) {
