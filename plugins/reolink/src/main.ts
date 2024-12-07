@@ -229,10 +229,15 @@ class ReolinkCamera extends RtspSmartCamera implements Camera, DeviceProvider, R
             });
 
         this.refreshTokenTimeout = setInterval(async () => {
-            const response = await this.getClientWithToken().login();
-            const token = response?.parameters?.token;
-            if (token) {
-                this.storageSettings.putSetting('apiToken', token);
+            try {
+                const response = await this.getClientWithToken().login();
+                const token = response?.parameters?.token;
+                this.console.log('Refreshing token', response);
+                if (token) {
+                    this.storageSettings.putSetting('apiToken', token);
+                }
+            } catch (e) {
+                this.console.log('Error refreshing the token', e);
             }
         }, 10000);
     }

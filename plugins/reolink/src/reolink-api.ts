@@ -75,14 +75,15 @@ export class ReolinkCameraClient {
 
     async login() {
         if (this.tokenLease > Date.now()) {
-            return;
+            return { parameters: this.parameters, tokenLease: this.tokenLease };
         }
 
         this.console.log(`token expired at ${this.tokenLease}, renewing...`);
 
         const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
         this.parameters = parameters
-        this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
+        this.tokenLease = Date.now() + 1000 * 3000;
+        // this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
 
         return { parameters: this.parameters, tokenLease: this.tokenLease };
     }
