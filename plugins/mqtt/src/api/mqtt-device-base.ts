@@ -1,7 +1,7 @@
 import { Settings, Setting, ScryptedDeviceBase, ScryptedInterface } from '@scrypted/sdk';
 import { connect, Client } from 'mqtt';
 import { ScriptableDeviceBase } from '../scrypted-eval';
-import type {MqttProvider} from '../main';
+import type { MqttProvider } from '../main';
 
 export class MqttDeviceBase extends ScriptableDeviceBase implements Settings {
     client: Client;
@@ -14,6 +14,12 @@ export class MqttDeviceBase extends ScriptableDeviceBase implements Settings {
 
     async getSettings(): Promise<Setting[]> {
         return [
+            {
+                title: 'Use plugin authentication',
+                key: 'usePluginAuthentication',
+                type: 'boolean',
+                value: JSON.parse(this.storage.getItem('usePluginAuthentication') ?? 'false'),
+            },
             {
                 title: 'Subscription URL',
                 key: 'url',
@@ -38,7 +44,7 @@ export class MqttDeviceBase extends ScriptableDeviceBase implements Settings {
     }
 
     async putSetting(key: string, value: string | number | boolean) {
-        if (key === 'url') {
+        if (key === 'url' && value !== '') {
             let url = value.toString();
             if (!url.endsWith('/'))
                 url += '/';
@@ -59,28 +65,40 @@ export class MqttDeviceBase extends ScriptableDeviceBase implements Settings {
         let username: string;
         let password: string;
 
+        const usePluginAuthentication = JSON.parse(this.storage.getItem('usePluginAuthentication') ?? 'false');
         const externalBroker = this.provider.storage.getItem('externalBroker');
-        if (urlString) {
-            this.console.log('Using device specific broker.', urlString);
-            url = new URL(urlString);
-            username = this.storage.getItem('username') || undefined;
-            password = this.storage.getItem('password') || undefined;
-            this.pathname = url.pathname.substring(1);
-        }
-        else if (externalBroker && !this.provider.isBrokerEnabled) {
-            this.console.log('Using external broker.', externalBroker);
+
+        if (usePluginAuthentication && externalBroker) {
             url = new URL(externalBroker);
             username = this.provider.storage.getItem('username') || undefined;
             password = this.provider.storage.getItem('password') || undefined;
-            this.pathname = `${url.pathname.substring(1)}/${this.id}`;
-        }
-        else {
-            this.console.log('Using built in broker.');
-            const tcpPort = this.provider.storage.getItem('tcpPort') || '';
-            url = new URL(`mqtt://localhost:${tcpPort}/scrypted`);
-            username = this.provider.storage.getItem('username') || undefined;
-            password = this.provider.storage.getItem('password') || undefined;
-            this.pathname = `${url.pathname.substring(1)}/${this.id}`;
+            this.pathname = url.pathname.substring(1);
+            if (!this.pathname.endsWith('/')) {
+                this.pathname = `${this.pathname}/`;
+            }
+        } else {
+            if (urlString) {
+                this.console.log('Using device specific broker.', urlString);
+                url = new URL(urlString);
+                username = this.storage.getItem('username') || undefined;
+                password = this.storage.getItem('password') || undefined;
+                this.pathname = url.pathname.substring(1);
+            }
+            else if (externalBroker && !this.provider.isBrokerEnabled) {
+                this.console.log('Using external broker.', externalBroker);
+                url = new URL(externalBroker);
+                username = this.provider.storage.getItem('username') || undefined;
+                password = this.provider.storage.getItem('password') || undefined;
+                this.pathname = `${url.pathname.substring(1)}/${this.id}`;
+            }
+            else {
+                this.console.log('Using built in broker.');
+                const tcpPort = this.provider.storage.getItem('tcpPort') || '';
+                url = new URL(`mqtt://localhost:${tcpPort}/scrypted`);
+                username = this.provider.storage.getItem('username') || undefined;
+                password = this.provider.storage.getItem('password') || undefined;
+                this.pathname = `${url.pathname.substring(1)}/${this.id}`;
+            }
         }
 
         const urlWithoutPath = new URL(url);
@@ -88,15 +106,15 @@ export class MqttDeviceBase extends ScriptableDeviceBase implements Settings {
 
         const client = this.client = connect(urlWithoutPath.toString(), {
             rejectUnauthorized: false,
-            username: this.storage.getItem('username') || undefined,
-            password: this.storage.getItem('password') || undefined,
+            username,
+            password,
         });
         client.setMaxListeners(Infinity);
 
         client.on('connect', packet => {
             this.console.log('connected to mqtt', packet);
         })
-        
+
         return this.client;
     }
 }
