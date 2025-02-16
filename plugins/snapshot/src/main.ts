@@ -280,7 +280,10 @@ class SnapshotMixin extends SettingsMixinDeviceBase<Camera> implements Camera {
         const periodicSnapshot = options?.reason === 'periodic';
 
         // clear out snapshots that are too old.
-        if (this.currentPictureTime < Date.now() - 1 * 60 * 60 * 1000)
+        if (
+            !this.mixinDeviceInterfaces.includes(ScryptedInterface.Sleep) &&
+            this.currentPictureTime < Date.now() - 1 * 60 * 60 * 1000
+        )
             this.currentPicture = undefined;
 
         // always grab/debounce a snapshot
