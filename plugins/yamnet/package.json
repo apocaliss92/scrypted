@@ -31,7 +31,8 @@
       "type": "API",
       "interfaces": [
          "DeviceProvider",
-         "Settings"
+         "Settings",
+         "ObjectDetection"
       ]
    },
    "devDependencies": {

@@ -14,7 +14,11 @@ import librosa
 import scipy.signal
 import scrypted_sdk
 from scrypted_sdk.other import SettingValue
-from scrypted_sdk.types import Setting
+from scrypted_sdk.types import (
+    Setting, MediaObject, ObjectDetection, ObjectDetectionGeneratorSession,
+    ObjectDetectionModel, ObjectDetectionSession, ObjectDetectionResult,
+    ObjectsDetected, ScryptedMimeTypes
+)
 
 try:
     import tensorflow as tf
@@ -27,7 +31,7 @@ predictExecutor = concurrent.futures.ThreadPoolExecutor(1, "YAMNet-Predict")
 prepareExecutor = concurrent.futures.ThreadPoolExecutor(1, "YAMNet-Prepare")
 
 
-class YAMNetPlugin(scrypted_sdk.ScryptedDeviceBase, scrypted_sdk.Settings, scrypted_sdk.DeviceProvider):
+class YAMNetPlugin(scrypted_sdk.ScryptedDeviceBase, scrypted_sdk.Settings, scrypted_sdk.DeviceProvider, ObjectDetection):
     def __init__(self, nativeId: str | None = None):
         super().__init__(nativeId=nativeId)
         
@@ -58,6 +62,138 @@ class YAMNetPlugin(scrypted_sdk.ScryptedDeviceBase, scrypted_sdk.Settings, scryp
         self.sample_rate = 16000  # YAMNet expects 16kHz audio
         self.frame_duration = 0.96  # Each frame is 0.96 seconds
         self.hop_duration = 0.48    # Hop every 0.48 seconds
+
+    # ObjectDetection interface methods
+    def getClasses(self) -> List[str]:
+        """Return list of audio event classes that the model can detect"""
+        return self.class_names
+
+    def getTriggerClasses(self) -> List[str]:
+        """Return list of classes that can trigger events"""
+        # Return common trigger-worthy audio events
+        trigger_classes = [
+            'Speech', 'Crying, sobbing', 'Screaming', 'Whispering', 'Laughter',
+            'Gunshot, gunfire', 'Breaking', 'Explosion', 'Glass breaking',
+            'Alarm', 'Fire alarm', 'Smoke detector', 'Emergency vehicle',
+            'Doorbell', 'Door knock', 'Footsteps', 'Car', 'Motor vehicle (road)',
+            'Siren', 'Dog', 'Cat', 'Animal', 'Bird', 'Baby cry, infant cry'
+        ]
+        # Filter to only return classes that actually exist in our model
+        return [cls for cls in trigger_classes if cls in self.class_names]
+
+    def get_input_details(self) -> Tuple[int, int, int]:
+        """Return audio input details: (sample_rate, channels, duration_samples)"""
+        # For audio: sample_rate, channels, typical duration in samples
+        return (self.sample_rate, 1, int(self.frame_duration * self.sample_rate))
+
+    def get_input_format(self) -> str:
+        """Return audio input format"""
+        return 'audio/pcm'
+
+    def getModelSettings(self, settings: Any = None) -> List[Setting]:
+        """Return model-specific settings"""
+        return []
+
+    async def getDetectionModel(self, settings: Any = None) -> ObjectDetectionModel:
+        """Return model information for ObjectDetection interface"""
+        model: ObjectDetectionModel = {
+            'name': 'YAMNet Audio Classification',
+            'classes': self.getClasses(),
+            'triggerClasses': self.getTriggerClasses(),
+            'inputSize': self.get_input_details(),
+            'inputFormat': self.get_input_format(),
+            'settings': self.getModelSettings(settings),
+        }
+        return model
+
+    def create_detection_result(self, predictions: List[Dict], audio_duration: float) -> ObjectsDetected:
+        """Create ObjectsDetected result from YAMNet predictions"""
+        detections: List[ObjectDetectionResult] = []
+        
+        for pred in predictions:
+            detection: ObjectDetectionResult = {
+                'className': pred['class_name'],
+                'score': pred['confidence'],
+                # For audio, we don't have spatial bounding boxes, but we can use
+                # the timestamp as a temporal "bounding box"
+                'boundingBox': (0, 0, audio_duration, 1.0),  # (start_time, 0, duration, 1)
+            }
+            detections.append(detection)
+        
+        result: ObjectsDetected = {
+            'detections': detections,
+            'inputDimensions': (self.sample_rate, 1, int(audio_duration * self.sample_rate))
+        }
+        
+        return result
+
+    async def run_detection_audio(self, audio_buffer: bytes, detection_session: ObjectDetectionSession = None) -> ObjectsDetected:
+        """Run audio detection (equivalent to run_detection_image for audio)"""
+        try:
+            # Use our existing classification method
+            result = await self.classify_audio_async(audio_buffer)
+            
+            # Calculate audio duration
+            audio_data = self.preprocess_audio(audio_buffer)
+            audio_duration = len(audio_data) / self.sample_rate
+            
+            # Convert to ObjectDetection format
+            return self.create_detection_result(result['all_predictions'], audio_duration)
+            
+        except Exception as e:
+            print(f"Error in audio detection: {e}")
+            traceback.print_exc()
+            # Return empty result on error
+            return {
+                'detections': [],
+                'inputDimensions': (self.sample_rate, 1, 0)
+            }
+
+    async def generateObjectDetections(self, audioFrames: Any, session: ObjectDetectionGeneratorSession = None) -> Any:
+        """Generate object detections from audio stream"""
+        try:
+            audioFrames = await scrypted_sdk.sdk.connectRPCObject(audioFrames)
+            async for audioFrame in audioFrames:
+                # Extract audio buffer from frame
+                audio_buffer = audioFrame.get('audio', b'')
+                if audio_buffer:
+                    detected = await self.run_detection_audio(audio_buffer, session)
+                    yield {
+                        '__json_copy_serialize_children': True,
+                        'detected': detected,
+                        'audioFrame': audioFrame,
+                    }
+        finally:
+            try:
+                await audioFrames.aclose()
+            except:
+                pass
+
+    async def detectObjects(self, mediaObject: MediaObject, session: ObjectDetectionSession = None) -> ObjectsDetected:
+        """Main detection method for ObjectDetection interface"""
+        try:
+            # Handle audio media objects
+            if mediaObject.mimeType and 'audio' in mediaObject.mimeType:
+                # Get audio buffer
+                audio_buffer = await scrypted_sdk.mediaManager.convertMediaObjectToBuffer(
+                    mediaObject, 'audio/pcm'
+                )
+                return await self.run_detection_audio(audio_buffer, session)
+            else:
+                # Try to extract audio from video or other media
+                audio_buffer = await scrypted_sdk.mediaManager.convertMediaObjectToBuffer(
+                    mediaObject, 'audio/pcm'
+                )
+                return await self.run_detection_audio(audio_buffer, session)
+                
+        except Exception as e:
+            print(f"Error detecting objects from media: {e}")
+            traceback.print_exc()
+            # Return empty result on error
+            return {
+                'detections': [],
+                'inputDimensions': (self.sample_rate, 1, 0)
+            }
 
     def load_class_names(self) -> List[str]:
         """Load class names from CSV file"""
@@ -208,20 +344,42 @@ class YAMNetPlugin(scrypted_sdk.ScryptedDeviceBase, scrypted_sdk.Settings, scryp
 
     async def getSettings(self) -> List[Setting]:
         """Get plugin settings"""
+        trigger_classes = self.getTriggerClasses()
         return [
             {
                 "title": "Model Info",
-                "description": f"YAMNet model with {len(self.class_names)} classes",
+                "description": f"YAMNet model with {len(self.class_names)} audio classes",
                 "value": f"TensorFlow Lite: {'Available' if tf_available else 'Not Available'}",
                 "readonly": True,
                 "key": "model_info",
             },
             {
-                "title": "Sample Rate",
-                "description": "Audio sample rate (Hz)",
-                "value": str(self.sample_rate),
+                "title": "Audio Configuration",
+                "description": "Audio input requirements",
+                "value": f"Sample Rate: {self.sample_rate} Hz, Mono, Float32 [-1.0, 1.0]",
                 "readonly": True,
-                "key": "sample_rate",
+                "key": "audio_config",
+            },
+            {
+                "title": "Frame Processing",
+                "description": "Audio frame processing details",
+                "value": f"Frame: {self.frame_duration}s, Hop: {self.hop_duration}s",
+                "readonly": True,
+                "key": "frame_processing",
+            },
+            {
+                "title": "Trigger Classes",
+                "description": f"Number of trigger-worthy audio events",
+                "value": f"{len(trigger_classes)} classes (e.g., Speech, Alarm, Breaking)",
+                "readonly": True,
+                "key": "trigger_classes",
+            },
+            {
+                "title": "Detection Interface",
+                "description": "ObjectDetection interface compatibility",
+                "value": "Audio events detected as temporal objects",
+                "readonly": True,
+                "key": "detection_interface",
             }
         ]
 
