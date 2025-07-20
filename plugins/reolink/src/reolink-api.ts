@@ -3,7 +3,7 @@ import { PassThrough, Readable } from 'stream';
 import { HttpFetchOptions } from '../../../server/src/fetch/http-fetch';
 
 import { sleep } from "@scrypted/common/src/sleep";
-import { PanTiltZoomCommand } from "@scrypted/sdk";
+import { PanTiltZoomCommand, VideoClipOptions } from "@scrypted/sdk";
 import { DevInfo, getLoginParameters } from './probe';
 
 export interface Enc {
@@ -74,6 +74,28 @@ export interface PtzPreset {
     id: number;
     name: string;
 }
+
+export interface VideoSearchTime {
+    day: number;
+    hour: number;
+    min: number;
+    mon: number;
+    sec: number;
+    year: number;
+}
+
+export interface VideoSearchResult {
+    EndTime: VideoSearchTime;
+    StartTime: VideoSearchTime;
+    frameRate: number;
+    height: number;
+    name: string;
+    size: number;
+    type: number;
+    width: number;
+}
+
+export type VideoSearchType = 'sub' | 'main';
 
 export const isDeviceNvr = (deviceInfo: DevInfo) => ['HOMEHUB', 'NVR', 'NVR_WIFI'].includes(deviceInfo.exactType);
 
@@ -765,6 +787,95 @@ export class ReolinkCameraClient {
             activeLink,
             wifiSignal,
             isWifi
+        };
+    }
+
+    async getVideoClips(
+        options?: VideoClipOptions,
+        streamType: VideoSearchType = 'main',
+    ) {
+        const url = new URL(`http://${this.host}/api.cgi`);
+
+        const startTime = new Date(options.startTime);
+        let endTime = options.endTime ? new Date(options.endTime) : undefined;
+
+        // If the endTime is not the same day as startTime, 
+        // or no endDate is provided, set to the end of the startTime
+        // Reolink only supports 1 day recordings fetching
+        if (!endTime || endTime.getDate() > startTime.getDate()) {
+            endTime = new Date(startTime);
+            endTime.setHours(23);
+            endTime.setMinutes(59);
+            endTime.setSeconds(59);
+        }
+
+        const body = [
+            {
+                cmd: "Search",
+                action: 1,
+                param: {
+                    Search: {
+                        channel: this.channelId,
+                        streamType,
+                        onlyStatus: 0,
+                        StartTime: {
+                            year: startTime.getFullYear(),
+                            mon: startTime.getMonth() + 1,
+                            day: startTime.getDate(),
+                            hour: startTime.getHours(),
+                            min: startTime.getMinutes(),
+                            sec: startTime.getSeconds()
+                        },
+                        EndTime: {
+                            year: endTime.getFullYear(),
+                            mon: endTime.getMonth() + 1,
+                            day: endTime.getDate(),
+                            hour: endTime.getHours(),
+                            min: endTime.getMinutes(),
+                            sec: endTime.getSeconds()
+                        }
+                    }
+                }
+            }
+        ];
+
+        try {
+            const response = await this.requestWithLogin({
+                url,
+                responseType: 'json',
+                method: 'POST',
+            }, this.createReadable(body));
+
+            const error = response?.body?.[0]?.error;
+            if (error) {
+                this.console.log('Error fetching videoclips', error, JSON.stringify({ body, url }));
+                return [];
+            }
+
+            return (response?.body?.[0]?.value?.SearchResult?.File ?? []) as VideoSearchResult[];
+        } catch (e) {
+            this.console.log('Error fetching videoclips', e);
+            return [];
+        }
+    }
+
+    async getVideoClipUrl(videoclipPath: string) {
+        const fileNameWithExtension = videoclipPath.split('/').pop();
+        let sanitizedPath = videoclipPath.replaceAll(' ', '%20');
+        if (!sanitizedPath.startsWith('/')) {
+            sanitizedPath = `/${sanitizedPath}`;
+        }
+
+        const match = fileNameWithExtension.match(/.*Rec(\w{3})(?:_|_DST)(\d{8})_(\d{6})_.*/);
+        const date = match[2];
+        const time = match[3];
+        const start = `${date}${time}`;
+        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&channel=${this.channelId}&source=${sanitizedPath}&start=${start}&type=0&seek=0&token=${this.parameters.token}`;
+        const downloadPath = `cgi-bin/api.cgi?cmd=Download&source=${sanitizedPath}&output=ha_playback_${start}.mp4&start=${start}&token=${this.parameters.token}`;
+
+        return {
+            playbackPathWithHost: `http://${this.host}/${playbackPath}`,
+            downloadPathWithHost: `http://${this.host}/${downloadPath}`,
         };
     }
 }
