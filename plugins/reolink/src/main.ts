@@ -1158,6 +1158,10 @@ class ReolinkProvider extends RtspProvider {
                 throw e;
             }
 
+            if (encodeURIComponent(password) !== password) {
+                throw new Error('fix your password');
+            }
+
             try {
                 deviceInfo = await api.getDeviceInfo();
                 doorbell = deviceInfo.type === 'BELL';
