@@ -3,6 +3,7 @@ import { RtspProvider } from "../../rtsp/src/rtsp";
 import { DevInfo } from './probe';
 import { ReolinkCameraClient } from './reolink-api';
 import { ReolinkCamera } from "./camera";
+import { ReolinkNvr } from "./nvr";
 
 class ReolinkProvider extends RtspProvider {
     getScryptedDeviceCreator(): string {
@@ -25,62 +26,75 @@ class ReolinkProvider extends RtspProvider {
         let info: DeviceInformation = {};
 
         const skipValidate = settings.skipValidate?.toString() === 'true';
+        const isNvr = settings.isNvr?.toString() === 'true';
         const username = settings.username?.toString();
         const password = settings.password?.toString();
-        let doorbell: boolean = false;
-        let name: string = 'Reolink Camera';
-        let deviceInfo: DevInfo;
-        let ai;
-        let abilities;
-        const rtspChannel = parseInt(settings.rtspChannel?.toString()) || 0;
-        if (!skipValidate) {
-            const api = new ReolinkCameraClient(httpAddress, username, password, rtspChannel, this.console);
-            const apiWithToken = new ReolinkCameraClient(httpAddress, username, password, rtspChannel, this.console, true);
-            try {
-                await api.jpegSnapshot();
-            }
-            catch (e) {
-                this.console.error('Error adding Reolink camera', e);
-                throw e;
-            }
+        const ip = settings.ip?.toString();
+        const httpPort = settings.httpPort?.toString();
 
-            if (encodeURIComponent(password) !== password) {
-                throw new Error('fix your password');
-            }
-
-            try {
-                deviceInfo = await api.getDeviceInfo();
-                doorbell = deviceInfo.type === 'BELL';
-                name = deviceInfo.name ?? 'Reolink Camera';
-                ai = await api.getAiState();
+        if (isNvr) {
+            const device = await this.getDevice(nativeId) as ReolinkNvr;
+            device.info = info;
+            await device.putSetting('username', username);
+            await device.putSetting('password', password);
+            await device.putSetting('address', ip);
+            await device.putSetting('port', httpPort);
+        } else {
+            let doorbell: boolean = false;
+            let name: string = 'Reolink Camera';
+            let deviceInfo: DevInfo;
+            let ai;
+            let abilities;
+            const rtspChannel = parseInt(settings.rtspChannel?.toString()) || 0;
+            if (!skipValidate) {
+                const api = new ReolinkCameraClient(httpAddress, username, password, rtspChannel, this.console);
+                const apiWithToken = new ReolinkCameraClient(httpAddress, username, password, rtspChannel, this.console, true);
                 try {
-                    abilities = await api.getAbility();
-                } catch (e) {
-                    abilities = await apiWithToken.getAbility();
+                    await api.jpegSnapshot();
+                }
+                catch (e) {
+                    this.console.error('Error adding Reolink camera', e);
+                    throw e;
+                }
+
+                if (encodeURIComponent(password) !== password) {
+                    throw new Error('fix your password');
+                }
+
+                try {
+                    deviceInfo = await api.getDeviceInfo();
+                    doorbell = deviceInfo.type === 'BELL';
+                    name = deviceInfo.name ?? 'Reolink Camera';
+                    ai = await api.getAiState();
+                    try {
+                        abilities = await api.getAbility();
+                    } catch (e) {
+                        abilities = await apiWithToken.getAbility();
+                    }
+                }
+                catch (e) {
+                    this.console.error('Reolink camera does not support AI events', e);
                 }
             }
-            catch (e) {
-                this.console.error('Reolink camera does not support AI events', e);
-            }
+            settings.newCamera ||= name;
+
+            nativeId = await super.createDevice(settings, nativeId);
+
+            const device = await this.getDevice(nativeId) as ReolinkCamera;
+            device.info = info;
+            device.putSetting('username', username);
+            device.putSetting('password', password);
+            device.storageSettings.values.doorbell = doorbell;
+            device.storageSettings.values.deviceInfo = deviceInfo;
+            device.storageSettings.values.abilities = abilities;
+            device.storageSettings.values.hasObjectDetector = ai;
+            device.setIPAddress(ip);
+            device.putSetting('rtspChannel', settings.rtspChannel?.toString());
+            device.setHttpPortOverride(httpPort);
+            device.updateDeviceInfo();
+
+            return nativeId;
         }
-        settings.newCamera ||= name;
-
-        nativeId = await super.createDevice(settings, nativeId);
-
-        const device = await this.getDevice(nativeId) as ReolinkCamera;
-        device.info = info;
-        device.putSetting('username', username);
-        device.putSetting('password', password);
-        device.storageSettings.values.doorbell = doorbell;
-        device.storageSettings.values.deviceInfo = deviceInfo;
-        device.storageSettings.values.abilities = abilities;
-        device.storageSettings.values.hasObjectDetector = ai;
-        device.setIPAddress(settings.ip?.toString());
-        device.putSetting('rtspChannel', settings.rtspChannel?.toString());
-        device.setHttpPortOverride(settings.httpPort?.toString());
-        device.updateDeviceInfo();
-
-        return nativeId;
     }
 
     async getCreateDeviceSettings(): Promise<Setting[]> {
